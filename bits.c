@@ -386,50 +386,55 @@ int classifyAdd3(int x, int y, int z) {
  *   Max ops: 60
  *   Rating: 7
  */
-unsigned floatScaleThreeHalves(unsigned uf) {
-  unsigned s = uf & 0x80000000u;
-  unsigned e = (uf >> 23) & 0xFFu;
-  unsigned m = uf & 0x7FFFFFu;
-  unsigned M, M3, q, rem, half;
-  int E, p, ef, k;
+unsigned floatScaleThreeHalves(unsigned x) {
+    unsigned sign = x & 0x80000000;
+    unsigned exp  = (x >> 23) & 0xFF;
+    unsigned frac = x & 0x7FFFFF;
 
-  if (e == 0xFFu) return uf;
-  if (e == 0 && m == 0) return uf;
-  if (e == 0) {
-    M = m;
-    E = -149;
-    while ((M & 0x800000u) == 0) {
-      M = M << 1;
-      E = E - 1;
+    if (exp == 0xFF) return x;                // Inf / NaN
+    if (exp == 0 && frac == 0) return sign;   // ±0
+
+    // 构造 24 位有效数 sig 和真实指数 e
+    unsigned sig;
+    int e;
+    if (exp == 0) {
+        e = -126;
+        sig = frac;
+        while (!(sig & 0x800000)) { sig <<= 1; e--; }
+    } else {
+        e = (int)exp - 127;
+        sig = (1u << 23) | frac;
     }
-  } else {
-    M = m | 0x800000u;
-    E = (int)e - 150;
-  }
-  M3 = M + (M << 1);
-  E = E - 1;
-  p = (M3 >> 25) ? 25 : 24;
-  ef = E + p + 127;
-  if (ef <= 0) {
-    k = -(E + 149);
-    q = M3 >> k;
-    rem = M3 & ((1u << k) - 1u);
-    half = 1u << (k - 1);
-    if (rem > half || (rem == half && (q & 1u))) q = q + 1;
-    return s | q;
-  }
-  if (ef >= 255) return s | 0x7F800000u;
-  k = p - 23;
-  q = M3 >> k;
-  rem = M3 & ((1u << k) - 1u);
-  half = 1u << (k - 1);
-  if (rem > half || (rem == half && (q & 1u))) q = q + 1;
-  if (q >> 24) {
-    q = q >> 1;
-    ef = ef + 1;
-  }
-  if (ef >= 255) return s | 0x7F800000u;
-  return s | ((unsigned)ef << 23) | (q & 0x7FFFFFu);
+    unsigned t = sig * 3;
+    int sh = e + 125;   // R ≈ t × 2^(e+125) = t × 2^sh
+
+    unsigned R;
+    if (sh >= 0) {
+        if (sh >= 32) return sign;            // 太小，舍入为 0
+        unsigned round  = (sh >= 1) ? ((t >> (sh - 1)) & 1) : 0;
+        unsigned sticky = (sh >= 2) ? (t & ((1u << (sh - 1)) - 1)) : 0;
+        R = (sh == 0) ? t : (t >> sh);
+        if (round && (sticky || (R & 1))) R++;
+    } else {
+        R = t << (-sh);
+    }
+    if (R & 0x800000) {
+        while (R & 0xFF000000) {
+            unsigned round = R & 1;
+            R >>= 1;
+            if (round && (R & 1)) R++;
+        }
+        unsigned ne = 1;
+        while (R & 0xFF000000) {   // R >= 2^24
+            unsigned r = R & 1;
+            R >>= 1;
+            if (r && (R & 1)) R++;
+            ne++;
+        }
+        if (ne >= 255) return sign | 0x7F800000;
+        return sign | (ne << 23) | (R & 0x7FFFFF);
+    }
+    return sign | R;   // 非规格化（含 R 可能为 0）
 }
 
 // P16
