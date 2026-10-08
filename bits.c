@@ -386,55 +386,36 @@ int classifyAdd3(int x, int y, int z) {
  *   Max ops: 60
  *   Rating: 7
  */
-unsigned floatScaleThreeHalves(unsigned x) {
-    unsigned sign = x & 0x80000000;
-    unsigned exp  = (x >> 23) & 0xFF;
-    unsigned frac = x & 0x7FFFFF;
+unsigned floatScaleThreeHalves(unsigned uf) {
+  unsigned s = uf & 0x80000000u;
+  unsigned m = uf & 0x7FFFFFu;
+  unsigned M3, q, rem, half;
+  int e = (uf >> 23) & 0xFF;
+  int K, ef, p;
 
-    if (exp == 0xFF) return x;                // Inf / NaN
-    if (exp == 0 && frac == 0) return sign;   // ±0
-
-    // 构造 24 位有效数 sig 和真实指数 e
-    unsigned sig;
-    int e;
-    if (exp == 0) {
-        e = -126;
-        sig = frac;
-        while (!(sig & 0x800000)) { sig <<= 1; e--; }
-    } else {
-        e = (int)exp - 127;
-        sig = (1u << 23) | frac;
-    }
-    unsigned t = sig * 3;
-    int sh = e + 125;   // R ≈ t × 2^(e+125) = t × 2^sh
-
-    unsigned R;
-    if (sh >= 0) {
-        if (sh >= 32) return sign;            // 太小，舍入为 0
-        unsigned round  = (sh >= 1) ? ((t >> (sh - 1)) & 1) : 0;
-        unsigned sticky = (sh >= 2) ? (t & ((1u << (sh - 1)) - 1)) : 0;
-        R = (sh == 0) ? t : (t >> sh);
-        if (round && (sticky || (R & 1))) R++;
-    } else {
-        R = t << (-sh);
-    }
-    if (R & 0x800000) {
-        while (R & 0xFF000000) {
-            unsigned round = R & 1;
-            R >>= 1;
-            if (round && (R & 1)) R++;
-        }
-        unsigned ne = 1;
-        while (R & 0xFF000000) {   // R >= 2^24
-            unsigned r = R & 1;
-            R >>= 1;
-            if (r && (R & 1)) R++;
-            ne++;
-        }
-        if (ne >= 255) return sign | 0x7F800000;
-        return sign | (ne << 23) | (R & 0x7FFFFF);
-    }
-    return sign | R;   // 非规格化（含 R 可能为 0）
+  if (e == 255) return uf;
+  if (e == 0) {
+    if (m == 0) return uf;
+    M3 = m + (m << 1);
+    q = M3 >> 1;
+    if ((M3 & 1) & (q & 1)) q = q + 1;
+    return s | q;
+  }
+  M3 = m | 0x800000u;
+  M3 = M3 + (M3 << 1);
+  p = 24 + ((M3 >> 25) != 0);
+  ef = p + e - 24;
+  K = p - 23;
+  q = M3 >> K;
+  rem = M3 & ((1u << K) - 1u);
+  half = 1u << (K - 1);
+  if (rem > half || (rem == half && (q & 1u))) q = q + 1;
+  if (q >> 24) {
+    q = q >> 1;
+    ef = ef + 1;
+  }
+  if (ef >= 255) return s | 0x7F800000u;
+  return s | (ef << 23) | (q & 0x7FFFFF);
 }
 
 // P16
@@ -451,14 +432,14 @@ unsigned floatScaleThreeHalves(unsigned x) {
  */
 unsigned floatRoundEven(unsigned uf) {
   unsigned s = uf & 0x80000000u;
-  unsigned e = (uf >> 23) & 0xFFu;
   unsigned m = uf & 0x7FFFFFu;
   unsigned M, q, rem, half;
+  int e = (uf >> 23) & 0xFF;
   int E, k, p;
 
-  if (e == 0xFFu) return uf;
+  if (e == 255) return uf;
   if (e == 0) return s;
-  E = (int)e - 150;
+  E = e - 150;
   if (E >= 0) return uf;
   M = m | 0x800000u;
   k = -E;
@@ -476,9 +457,8 @@ unsigned floatRoundEven(unsigned uf) {
   p = 0;
   while (p < 23 && (q >> (p + 1)) != 0) p = p + 1;
   q = q << (23 - p);
-  return s | ((unsigned)(p + 127) << 23) | (q & 0x7FFFFFu);
+  return s | ((p + 127) << 23) | (q & 0x7FFFFF);
 }
-
 
 // P17
 /*
@@ -495,8 +475,9 @@ unsigned float_i2f(int x) {
   int p, k;
 
   if (x == 0) return 0;
-  s = (unsigned)x & 0x80000000u;
-  M = (x < 0) ? (unsigned)(~x) + 1u : (unsigned)x;
+  s = x & 0x80000000u;
+  if (x < 0) M = ~x + 1u;
+  else M = x;
   p = 0;
   while (p < 31 && (M >> (p + 1)) != 0) p = p + 1;
   if (p <= 23) {
@@ -512,7 +493,7 @@ unsigned float_i2f(int x) {
     M = M >> 1;
     p = p + 1;
   }
-  return s | ((unsigned)(p + 127) << 23) | (M & 0x7FFFFFu);
+  return s | ((p + 127) << 23) | (M & 0x7FFFFF);
 }
 
 
